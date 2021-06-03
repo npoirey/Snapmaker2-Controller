@@ -33,7 +33,7 @@
 /**
  * G29.cpp - Auto Bed Leveling
  */
-
+#define ABL_TEMP_TARGET_MAX 90
 
 extern uint32_t GRID_MAX_POINTS_X;
 extern uint32_t GRID_MAX_POINTS_Y;
@@ -41,6 +41,8 @@ extern uint32_t ABL_GRID_POINTS_VIRT_X;
 extern uint32_t ABL_GRID_POINTS_VIRT_Y;
 extern uint32_t ABL_TEMP_POINTS_X;
 extern uint32_t ABL_TEMP_POINTS_Y;
+
+extern int16_t ABL_START_TEMP;
 
 extern float nozzle_height_probed;
 /**
@@ -50,6 +52,9 @@ extern float nozzle_height_probed;
  *
  *  P[Size]
  *              set the size of GRID
+ *
+ *  T[temperature]
+ *              set the desired target bed temperature to minimise bed warping related issues
  *
  *  A
  *              start auto probing
@@ -105,15 +110,34 @@ void GcodeSuite::G1029() {
     return;
   }
 
+  const bool seen_temp = parser.seenval('T');
+  int16_t targetTemp = 0;
+  int16_t ABL_TEMP_TARGET = 0;
+  if (seen_temp) {
+    targetTemp = parser.value_int();
+    SERIAL_ECHOLNPAIR("parsed ABL target temp : ", targetTemp);
+    if (!WITHIN(targetTemp, 0, ABL_TEMP_TARGET_MAX)) {
+      SERIAL_ECHOPAIR("target temp out of range (0-", ABL_TEMP_TARGET_MAX);
+      SERIAL_ECHOPAIR(") ", targetTemp);
+      return;
+    }
+    ABL_TEMP_TARGET = targetTemp;
+    // don't return to allow specifying a target temp for current levelling process
+  }
+
   const bool seen_a = parser.seen("A");
   if (seen_a) {
-
     process_cmd_imd("G28");
     set_bed_leveling_enabled(false);
 
     // Set the Z max feedrate to 50mm/s
     planner.settings.max_feedrate_mm_s[Z_AXIS] = 40;
 
+    if(seen_temp){
+      // use target temp if set, otherwise keep current temperature as target
+      thermalManager.setTargetBed(ABL_TEMP_TARGET);
+    }
+    ABL_START_TEMP = thermalManager.degTargetBed();
     endstops.enable_z_probe(true);
     auto_probing(false, false);
     endstops.enable_z_probe(false);
@@ -141,8 +165,11 @@ void GcodeSuite::G1029() {
     bed_level_virt_interpolate();
 
     // only save data in flash after adjusting z offset
-    if (opt_s == 0)
+    if (opt_s == 0) {
       settings.save();
+      // restore bed temperature to was it was before levelling
+      thermalManager.setTargetBed(ABL_START_TEMP);
+    }
     return;
   }
 

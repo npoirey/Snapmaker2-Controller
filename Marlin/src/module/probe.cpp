@@ -744,10 +744,19 @@ float probe_pt(const float &rx, const float &ry, const ProbePtRaise raise_after/
   // Move the probe to the starting XYZ
   LOG_I("Move to X: %.2f, Y: %.2f, Z: %.2f\n", nx, ny, nz);
   do_blocking_move_to(nx, ny, nz);
-
+  
   float measured_z = NAN;
   if (!DEPLOY_PROBE()) {
+    // wait for temp reach, allowing instantaneous return if we are over temp
+    thermalManager.wait_for_bed();
+    // read current bed target to restore it after measurement point
+    int16_t bedTargetTemp = thermalManager.degTargetBed();
+    // disable heaters before measuring to avoid interferences
+    thermalManager.disable_all_heaters();
+    // do the probing
     measured_z = run_z_probe() + zprobe_zoffset;
+    // restore heating for the next point
+    thermalManager.setTargetBed(bedTargetTemp);
 
     const bool big_raise = raise_after == PROBE_PT_BIG_RAISE;
     if (big_raise || raise_after == PROBE_PT_RAISE)
